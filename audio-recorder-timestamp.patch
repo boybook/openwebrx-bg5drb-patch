@@ -1,0 +1,159 @@
+diff --git a/csdr/chain/toolbox.py b/csdr/chain/toolbox.py
+index 30b345ba..5c910dcf 100644
+--- a/csdr/chain/toolbox.py
++++ b/csdr/chain/toolbox.py
+@@ -190,12 +190,12 @@ class AudioRecorder(ServiceDemodulator, DialFrequencyReceiver):
+         # Get settings
+         pm = Config.get()
+         squelchLevel = pm["rec_squelch"]
+-        hangTime = int(sampleRate * pm["rec_hang_time"] / 1000)
++        hangTime = pm["rec_hang_time"]
+         produceSilence = pm["rec_produce_silence"]
+         # Initialize state
+         self.sampleRate = sampleRate
+-        self.recorder = Mp3Recorder(service)
+-        self.squelch = SnrSquelch(Format.FLOAT, 2048, 512, hangTime, 0, 1, produceSilence)
++        self.recorder = Mp3Recorder(service, hangTime=hangTime if not produceSilence else 0)
++        self.squelch = SnrSquelch(Format.FLOAT, 2048, 512, int(sampleRate * hangTime / 1000), 0, 1, produceSilence)
+         # Set recording squelch level
+         self.setSquelchLevel(squelchLevel)
+         workers = [
+diff --git a/owrx/storage.py b/owrx/storage.py
+index 3723ac8d..ca7f6d2c 100644
+--- a/owrx/storage.py
++++ b/owrx/storage.py
+@@ -6,6 +6,8 @@ import threading
+ import subprocess
+ import os
+ import re
++import time
++import json
+ 
+ import logging
+ 
+@@ -14,7 +16,7 @@ logger = logging.getLogger(__name__)
+ class Storage(object):
+     sharedInstance = None
+     creationLock = threading.Lock()
+-    filePattern = r'[A-Z0-9]+-[0-9]+-[0-9]+(-[0-9]+)?(-[0-9]+)?\.(bmp|png|txt|mp3)'
++    filePattern = r'[A-Z0-9]+-[0-9]+-[0-9]+(-[0-9]+)?(-[0-9]+)?\.(bmp|png|txt|mp3|json)'
+ 
+     # Get shared instance of Storage class
+     @staticmethod
+@@ -143,13 +145,21 @@ class Storage(object):
+ 
+ 
+ class DataRecorder(object):
+-    def __init__(self, filePrefix: str = None, fileExtension: str = "", maxBytes: int = 8 * 1024 * 1024):
++    def __init__(self, filePrefix: str = None, fileExtension: str = "", maxBytes: int = 8 * 1024 * 1024, hangTime: int = 0):
+         self.frequency = 0
+         self.filePfx   = filePrefix
+         self.fileExt   = fileExtension
+         self.file      = None
+         self.maxBytes  = maxBytes
+         self.cntBytes  = 0
++        # Segment tracking for JSON timestamp file
++        self.segmentThreshold = (hangTime + 100) / 1000.0 if hangTime > 0 else 0
++        self.jsonFile = None
++        self.firstSegment = True
++        self.lastWriteTime = None
++        self.currentSegment = None
++        self.segmentStartTime = None
++        self.audioTimeMs = 0
+ 
+     def __del__(self):
+         # Close currently open file, if any
+@@ -161,6 +171,7 @@ class DataRecorder(object):
+                 logger.info("Closing file '%s'." % self.file.name)
+                 self.file.close()
+                 self.file = None
++                self._closeJsonFile()
+                 # Delete excessive files from storage
+                 logger.info("Performing storage cleanup...")
+                 Storage.getSharedInstance().cleanStoredFiles()
+@@ -168,6 +179,40 @@ class DataRecorder(object):
+                 logger.error("Exception closing file: %s" % str(e))
+                 self.file = None
+ 
++    def _openJsonFile(self, fileName):
++        jsonName = fileName.rsplit('.', 1)[0] + '.json'
++        self.jsonFile = open(Storage.getFilePath(jsonName), 'w')
++        self.jsonFile.write('[\n')
++        self.firstSegment = True
++        self.audioTimeMs = 0
++
++    def _closeJsonFile(self):
++        if self.jsonFile:
++            self._endCurrentSegment()
++            self.jsonFile.write('\n]')
++            self.jsonFile.close()
++            self.jsonFile = None
++
++    def _startNewSegment(self):
++        self.currentSegment = {
++            'start_byte': self.cntBytes,
++            'start_time_ms': self.audioTimeMs,
++            'start_utc': datetime.utcnow().isoformat() + 'Z'
++        }
++        self.segmentStartTime = time.time()
++
++    def _endCurrentSegment(self):
++        if not self.currentSegment or not self.jsonFile:
++            return
++        self.currentSegment['duration_ms'] = int((time.time() - self.segmentStartTime) * 1000)
++        self.audioTimeMs += self.currentSegment['duration_ms']
++        if not self.firstSegment:
++            self.jsonFile.write(',\n')
++        self.firstSegment = False
++        self.jsonFile.write('  ' + json.dumps(self.currentSegment))
++        self.jsonFile.flush()
++        self.currentSegment = None
++
+     def newFile(self, fileName):
+         self.closeFile()
+         try:
+@@ -179,9 +224,19 @@ class DataRecorder(object):
+             self.file = None
+ 
+     def writeFile(self, data):
++        now = time.time()
++        # Detect squelch gap (time interval exceeds threshold = new segment)
++        if self.segmentThreshold > 0 and self.lastWriteTime and now - self.lastWriteTime > self.segmentThreshold:
++            self._endCurrentSegment()
+         # If no file open, create and open a new file
+         if self.file is None and self.filePfx is not None:
+-            self.newFile(Storage.makeFileName(self.filePfx+"-{0}", self.frequency) + self.fileExt)
++            fileName = Storage.makeFileName(self.filePfx+"-{0}", self.frequency) + self.fileExt
++            self.newFile(fileName)
++            if self.segmentThreshold > 0:
++                self._openJsonFile(fileName)
++        # Start new segment if needed
++        if self.segmentThreshold > 0 and self.currentSegment is None:
++            self._startNewSegment()
+         # If file open now...
+         if self.file is not None:
+             # Write new line into the file
+@@ -193,6 +248,7 @@ class DataRecorder(object):
+             self.cntBytes = self.cntBytes + len(data)
+             if self.cntBytes >= self.maxBytes:
+                 self.closeFile()
++        self.lastWriteTime = now
+ 
+     def closeImage(self, newHeight: int, height: int, minHeight: int = 64):
+         if self.file is not None:
+diff --git a/owrx/toolbox.py b/owrx/toolbox.py
+index 4d39087e..a1af745d 100644
+--- a/owrx/toolbox.py
++++ b/owrx/toolbox.py
+@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
+ 
+ 
+ class Mp3Recorder(ThreadModule, DataRecorder):
+-    def __init__(self, service: bool = False, maxBytes: int = 32 * 1024 * 1024):
++    def __init__(self, service: bool = False, maxBytes: int = 32 * 1024 * 1024, hangTime: int = 0):
+         self.service = service
+-        DataRecorder.__init__(self, "REC", ".mp3", maxBytes)
++        DataRecorder.__init__(self, "REC", ".mp3", maxBytes, hangTime)
+         ThreadModule.__init__(self)
+ 
+     def getInputFormat(self) -> Format:
