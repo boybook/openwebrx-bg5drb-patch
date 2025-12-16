@@ -1,0 +1,13 @@
+diff --git a/owrx/modes.py b/owrx/modes.py
+--- a/owrx/modes.py
++++ b/owrx/modes.py
+@@ -90,7 +90,7 @@ class DigitalMode(Mode):
+     def for_underlying(self, underlying: str):
+         if underlying not in self.underlying:
+             raise ValueError("{} is not a valid underlying mode for {}".format(underlying, self.modulation))
+         return DigitalMode(
+-            self.modulation, self.name, [underlying], self.bandpass, self.requirements, self.service, self.squelch
++            self.modulation, self.name, [underlying], self.bandpass, self.ifRate, self.requirements, self.service, self.squelch
+         )
+
+

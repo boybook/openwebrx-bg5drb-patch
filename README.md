@@ -20,6 +20,12 @@ Adds JSON timestamp file generation for audio recordings. When recording with sq
 ]
 ```
 
+### modes-ifrate-fix.patch
+
+Fixes a bug in `DigitalMode.for_underlying()` method where the `ifRate` parameter is missing, causing `TypeError` when using background services with underlying modulation specified.
+
+**Bug location:** `owrx/modes.py` line 93
+
 ## Usage with Docker Compose (Recommended)
 
 Mount the patch directory and register the apply script as an s6-overlay init script:
