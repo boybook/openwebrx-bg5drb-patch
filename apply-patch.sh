@@ -1,8 +1,7 @@
 #!/bin/bash
 # Apply OpenWebRX patches to installed Python packages
 # Run this script inside Docker container at startup
-
-set -e
+# Uses `patch` command (no git required)
 
 PATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIRS=(
@@ -27,15 +26,7 @@ if [ -z "$TARGET_DIR" ]; then
 fi
 
 echo "Target directory: $TARGET_DIR"
-
-# Initialize git if needed (for patch to work)
 cd "$TARGET_DIR"
-if [ ! -d ".git" ]; then
-    echo "Initializing git repository in $TARGET_DIR..."
-    git init -q
-    git add -A
-    git commit -q -m "Initial state" --allow-empty
-fi
 
 # Apply patches
 for patch_file in "$PATCH_DIR"/*.patch; do
@@ -43,15 +34,16 @@ for patch_file in "$PATCH_DIR"/*.patch; do
         patch_name=$(basename "$patch_file")
         echo "Applying patch: $patch_name"
 
-        # Check if patch can be applied
-        if git apply --check "$patch_file" 2>/dev/null; then
-            git apply "$patch_file"
-            echo "  Applied successfully"
-        elif git apply --check -R "$patch_file" 2>/dev/null; then
+        # Check if patch is already applied (dry-run reverse)
+        if patch -p1 -R --dry-run < "$patch_file" >/dev/null 2>&1; then
             echo "  Already applied, skipping"
+        # Check if patch can be applied (dry-run forward)
+        elif patch -p1 --dry-run < "$patch_file" >/dev/null 2>&1; then
+            patch -p1 < "$patch_file"
+            echo "  Applied successfully"
         else
-            echo "  Warning: Patch may have conflicts, trying with --3way..."
-            git apply --3way "$patch_file" || echo "  Failed to apply $patch_name"
+            echo "  Warning: Patch may have conflicts or cannot be applied"
+            patch -p1 --dry-run < "$patch_file" || true
         fi
     fi
 done

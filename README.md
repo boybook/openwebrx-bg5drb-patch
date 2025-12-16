@@ -20,60 +20,33 @@ Adds JSON timestamp file generation for audio recordings. When recording with sq
 ]
 ```
 
-## Usage with Docker Compose
+## Usage with Docker Compose (Recommended)
 
-### 1. Mount the patch directory
+Mount the patch directory and register the apply script as an s6-overlay init script:
 
 ```yaml
 services:
   openwebrx:
-    image: slechev/openwebrxplus:latest
+    image: slechev/openwebrxplus-softmbe:latest
     volumes:
+      # BG5DRB patch (audio-recorder-timestamp, etc.)
       - ./patch:/opt/patch:ro
-    command: >
-      sh -c "/opt/patch/apply-patch.sh && /init"
+      - ./patch/apply-patch.sh:/etc/cont-init.d/97-apply-bg5drb-patch.sh:ro
 ```
 
-### 2. Alternative: Use entrypoint wrapper
-
-Create `entrypoint.sh`:
-```bash
-#!/bin/bash
-/opt/patch/apply-patch.sh
-exec "$@"
-```
-
-Then in docker-compose.yml:
-```yaml
-services:
-  openwebrx:
-    image: slechev/openwebrxplus:latest
-    volumes:
-      - ./patch:/opt/patch:ro
-      - ./entrypoint.sh:/entrypoint.sh:ro
-    entrypoint: ["/entrypoint.sh"]
-    command: ["/init"]
-```
+The script will automatically run at container startup before the main service starts.
 
 ## Manual Application
 
 Inside the container:
 
 ```bash
-# Navigate to Python packages directory
-cd /usr/lib/python3/dist-packages
-
-# Initialize git (required for patch)
-git init
-git add -A
-git commit -m "Initial state"
-
-# Apply patch
-git apply /opt/patch/audio-recorder-timestamp.patch
+/opt/patch/apply-patch.sh
 ```
 
 ## Notes
 
 - The target directory is typically `/usr/lib/python3/dist-packages` in Debian-based images
-- Git initialization is required because the installed packages don't have a git repository
+- Uses the `patch` command (no git required)
 - Patches are idempotent - running the script multiple times is safe
+- To update patches: `git pull` in the patch directory, then restart the container
