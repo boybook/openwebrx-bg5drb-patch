@@ -1,0 +1,137 @@
+diff --git a/owrx/controllers/file.py b/owrx/controllers/file.py
+@@ -11,6 +11,78 @@
+ logger = logging.getLogger(__name__)
+ 
+ 
++def get_mp3_duration(filepath):
++    """Get MP3 file duration in seconds using frame header parsing."""
++    try:
++        # MP3 bitrate tables (kbps)
++        bitrates = {
++            # MPEG1 Layer III
++            (1, 3): [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0],
++            # MPEG2/2.5 Layer III
++            (2, 3): [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],
++        }
++        # Sample rate tables
++        sample_rates = {
++            1: [44100, 48000, 32000],  # MPEG1
++            2: [22050, 24000, 16000],  # MPEG2
++            3: [11025, 12000, 8000],   # MPEG2.5
++        }
++        
++        file_size = os.path.getsize(filepath)
++        with open(filepath, 'rb') as f:
++            data = f.read(min(16384, file_size))  # Read first 16KB to find frame
++        
++        # Skip ID3v2 tag if present
++        offset = 0
++        if data[:3] == b'ID3':
++            tag_size = ((data[6] & 0x7f) << 21) | ((data[7] & 0x7f) << 14) | \
++                       ((data[8] & 0x7f) << 7) | (data[9] & 0x7f)
++            offset = 10 + tag_size
++            if offset >= len(data):
++                return None
++        
++        # Find first valid frame header
++        while offset < len(data) - 4:
++            if data[offset] == 0xff and (data[offset + 1] & 0xe0) == 0xe0:
++                header = data[offset:offset + 4]
++                # Parse header
++                version_bits = (header[1] >> 3) & 0x03
++                layer_bits = (header[1] >> 1) & 0x03
++                bitrate_idx = (header[2] >> 4) & 0x0f
++                sample_idx = (header[2] >> 2) & 0x03
++                
++                # Version: 0=MPEG2.5, 2=MPEG2, 3=MPEG1
++                version = {0: 3, 2: 2, 3: 1}.get(version_bits)
++                layer = 4 - layer_bits  # 1=Layer III, 2=Layer II, 3=Layer I
++                
++                if version and layer == 3 and sample_idx < 3:  # Only Layer III
++                    br_key = (1 if version == 1 else 2, layer)
++                    bitrate = bitrates.get(br_key, [0]*16)[bitrate_idx]
++                    sample_rate = sample_rates.get(version, [0]*3)[sample_idx]
++                    
++                    if bitrate > 0 and sample_rate > 0:
++                        # Calculate duration: file_size / (bitrate * 1000 / 8)
++                        audio_size = file_size - offset
++                        duration = audio_size * 8 / (bitrate * 1000)
++                        return int(duration)
++                offset += 1
++            else:
++                offset += 1
++        return None
++    except Exception as e:
++        logger.debug("get_mp3_duration error: %s" % str(e))
++        return None
++
++
++def format_duration(seconds):
++    """Format duration as MM:SS or H:MM:SS."""
++    if seconds is None:
++        return ""
++    if seconds >= 3600:
++        return "%d:%02d:%02d" % (seconds // 3600, (seconds % 3600) // 60, seconds % 60)
++    return "%d:%02d" % (seconds // 60, seconds % 60)
++
++
+ class FileController(AssetsController):
+     def getFilePath(self, file):
+         return Storage.getFilePath(file)
+@@ -22,6 +94,7 @@
+         self.user  = self.authentication.getUser(request)
+         self.isimg = re.compile(r'.*\.(png|bmp|gif|jpg)$')
+         self.issnd = re.compile(r'.*\.(mp3|wav)$')
++        self.ismp3 = re.compile(r'.*\.mp3$')
+         super().__init__(handler, request, options)
+ 
+     def isAuthorized(self):
+@@ -38,12 +111,17 @@
+             if i % 3 == 0:
+                 rows += '<tr>\n'
+             # Show images as they are, show document icon for the rest
++            duration = ""
+             if self.isimg.match(files[i]):
+                 shot = "files/" + files[i]
+                 size = 0
+             elif self.issnd.match(files[i]):
+                 shot = "static/gfx/audio-file.png"
+-                size = os.path.getsize(Storage.getFilePath(files[i]))
++                filepath = Storage.getFilePath(files[i])
++                size = os.path.getsize(filepath)
++                # Get MP3 duration
++                if self.ismp3.match(files[i]):
++                    duration = format_duration(get_mp3_duration(filepath))
+             else:
+                 shot = "static/gfx/text-file.png"
+                 size = os.path.getsize(Storage.getFilePath(files[i]))
+@@ -63,11 +141,14 @@
+                 size = ("%d bytes" % size)
+             else:
+                 size = ""
++            # Duration display
++            duration_html = ('<div class="file-duration">%s</div>' % duration) if duration else ""
+             # Print out individual tiles
+             rows += ('<td class="file-tile">' +
+                 ('<a href="files/%s" download="%s">' % (files[i], files[i])) +
+                 ('<img src="%s" download="%s">' % (shot, files[i])) +
+                 ('<div class="file-size">%s</div>' % size) +
++                duration_html +
+                 ('<p class="file-title">%s</p>' % files[i]) +
+                 ('</a>%s</td>\n' % buttons))
+             # Finish a row
+diff --git a/htdocs/css/files.css b/htdocs/css/files.css
+@@ -44,6 +44,13 @@
+     left: 10px;
+ }
+ 
++.file-duration {
++    font-size: 80%;
++    position: absolute;
++    top: 28px;
++    left: 10px;
++}
++
+ .file-tile {
+     width: 32%;
+     position: relative;

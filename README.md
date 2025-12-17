@@ -26,6 +26,16 @@ Fixes a bug in `DigitalMode.for_underlying()` method where the `ifRate` paramete
 
 **Bug location:** `owrx/modes.py` line 93
 
+### files-audio-duration.patch
+
+Displays actual audio duration for MP3 files on the `/files` page. Parses MP3 frame headers to calculate duration without external dependencies.
+
+**Modified files:**
+- `owrx/controllers/file.py` - Adds `get_mp3_duration()` function and duration display logic
+- `htdocs/css/files.css` - Adds `.file-duration` style
+
+**Display format:** Duration shown as `MM:SS` (or `H:MM:SS` for files over 1 hour) below the file size
+
 ## Usage with Docker Compose (Recommended)
 
 Mount the patch directory and register the apply script as an s6-overlay init script:
