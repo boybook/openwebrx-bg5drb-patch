@@ -3,7 +3,9 @@
 # Run this script inside Docker container at startup
 # Uses `patch` command (no git required)
 
-PATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+# When run from /etc/cont-init.d/, $0 points there, not /opt/patch
+# So we hardcode the patch directory
+PATCH_DIR="/opt/patch"
 TARGET_DIRS=(
     "/usr/lib/python3/dist-packages"
     "/usr/local/lib/python3.*/dist-packages"
