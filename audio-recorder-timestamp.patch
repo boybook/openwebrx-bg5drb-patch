@@ -40,7 +40,7 @@ index 3723ac8d..ca7f6d2c 100644
  
      # Get shared instance of Storage class
      @staticmethod
-@@ -143,13 +145,20 @@ class Storage(object):
+@@ -143,13 +145,19 @@ class Storage(object):
  
  
  class DataRecorder(object):
@@ -57,12 +57,11 @@ index 3723ac8d..ca7f6d2c 100644
 +        self.jsonFile = None
 +        self.lastWriteTime = None
 +        self.currentSegment = None
-+        self.segmentStartTime = None
 +        self.audioTimeMs = 0
  
      def __del__(self):
          # Close currently open file, if any
-@@ -161,6 +170,7 @@ class DataRecorder(object):
+@@ -161,6 +169,7 @@ class DataRecorder(object):
                  logger.info("Closing file '%s'." % self.file.name)
                  self.file.close()
                  self.file = None
@@ -70,7 +69,7 @@ index 3723ac8d..ca7f6d2c 100644
                  # Delete excessive files from storage
                  logger.info("Performing storage cleanup...")
                  Storage.getSharedInstance().cleanStoredFiles()
-@@ -168,6 +178,34 @@ class DataRecorder(object):
+@@ -168,6 +177,35 @@ class DataRecorder(object):
                  logger.error("Exception closing file: %s" % str(e))
                  self.file = None
  
@@ -91,12 +90,13 @@ index 3723ac8d..ca7f6d2c 100644
 +            'start_time_ms': self.audioTimeMs,
 +            'start_utc': datetime.utcnow().isoformat() + 'Z'
 +        }
-+        self.segmentStartTime = time.time()
 +
 +    def _endCurrentSegment(self):
 +        if not self.currentSegment or not self.jsonFile:
 +            return
-+        self.currentSegment['duration_ms'] = int((time.time() - self.segmentStartTime) * 1000)
++        # Calculate duration from bytes: bytes * 8 / 32 kbps = bytes / 4
++        segment_bytes = self.cntBytes - self.currentSegment['start_byte']
++        self.currentSegment['duration_ms'] = segment_bytes * 8 // 32
 +        self.audioTimeMs += self.currentSegment['duration_ms']
 +        self.jsonFile.write(json.dumps(self.currentSegment) + '\n')
 +        self.jsonFile.flush()
