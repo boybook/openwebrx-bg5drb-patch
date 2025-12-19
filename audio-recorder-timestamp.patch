@@ -36,11 +36,11 @@ index 3723ac8d..ca7f6d2c 100644
      sharedInstance = None
      creationLock = threading.Lock()
 -    filePattern = r'[A-Z0-9]+-[0-9]+-[0-9]+(-[0-9]+)?(-[0-9]+)?\.(bmp|png|txt|mp3)'
-+    filePattern = r'[A-Z0-9]+-[0-9]+-[0-9]+(-[0-9]+)?(-[0-9]+)?\.(bmp|png|txt|mp3|json)'
++    filePattern = r'[A-Z0-9]+-[0-9]+-[0-9]+(-[0-9]+)?(-[0-9]+)?\.(bmp|png|txt|mp3|jsonl)'
  
      # Get shared instance of Storage class
      @staticmethod
-@@ -143,13 +145,21 @@ class Storage(object):
+@@ -143,13 +145,20 @@ class Storage(object):
  
  
  class DataRecorder(object):
@@ -52,10 +52,9 @@ index 3723ac8d..ca7f6d2c 100644
          self.file      = None
          self.maxBytes  = maxBytes
          self.cntBytes  = 0
-+        # Segment tracking for JSON timestamp file
++        # Segment tracking for JSONL timestamp file
 +        self.segmentThreshold = (hangTime + 100) / 1000.0 if hangTime > 0 else 0
 +        self.jsonFile = None
-+        self.firstSegment = True
 +        self.lastWriteTime = None
 +        self.currentSegment = None
 +        self.segmentStartTime = None
@@ -63,7 +62,7 @@ index 3723ac8d..ca7f6d2c 100644
  
      def __del__(self):
          # Close currently open file, if any
-@@ -161,6 +171,7 @@ class DataRecorder(object):
+@@ -161,6 +170,7 @@ class DataRecorder(object):
                  logger.info("Closing file '%s'." % self.file.name)
                  self.file.close()
                  self.file = None
@@ -71,21 +70,18 @@ index 3723ac8d..ca7f6d2c 100644
                  # Delete excessive files from storage
                  logger.info("Performing storage cleanup...")
                  Storage.getSharedInstance().cleanStoredFiles()
-@@ -168,6 +179,40 @@ class DataRecorder(object):
+@@ -168,6 +178,34 @@ class DataRecorder(object):
                  logger.error("Exception closing file: %s" % str(e))
                  self.file = None
  
 +    def _openJsonFile(self, fileName):
-+        jsonName = fileName.rsplit('.', 1)[0] + '.json'
++        jsonName = fileName.rsplit('.', 1)[0] + '.jsonl'
 +        self.jsonFile = open(Storage.getFilePath(jsonName), 'w')
-+        self.jsonFile.write('[\n')
-+        self.firstSegment = True
 +        self.audioTimeMs = 0
 +
 +    def _closeJsonFile(self):
 +        if self.jsonFile:
 +            self._endCurrentSegment()
-+            self.jsonFile.write('\n]')
 +            self.jsonFile.close()
 +            self.jsonFile = None
 +
@@ -102,17 +98,14 @@ index 3723ac8d..ca7f6d2c 100644
 +            return
 +        self.currentSegment['duration_ms'] = int((time.time() - self.segmentStartTime) * 1000)
 +        self.audioTimeMs += self.currentSegment['duration_ms']
-+        if not self.firstSegment:
-+            self.jsonFile.write(',\n')
-+        self.firstSegment = False
-+        self.jsonFile.write('  ' + json.dumps(self.currentSegment))
++        self.jsonFile.write(json.dumps(self.currentSegment) + '\n')
 +        self.jsonFile.flush()
 +        self.currentSegment = None
 +
      def newFile(self, fileName):
          self.closeFile()
          try:
-@@ -179,9 +224,19 @@ class DataRecorder(object):
+@@ -179,9 +217,19 @@ class DataRecorder(object):
              self.file = None
  
      def writeFile(self, data):
@@ -133,7 +126,7 @@ index 3723ac8d..ca7f6d2c 100644
          # If file open now...
          if self.file is not None:
              # Write new line into the file
-@@ -193,6 +248,7 @@ class DataRecorder(object):
+@@ -193,6 +241,7 @@ class DataRecorder(object):
              self.cntBytes = self.cntBytes + len(data)
              if self.cntBytes >= self.maxBytes:
                  self.closeFile()
